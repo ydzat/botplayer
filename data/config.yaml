@@ -1,0 +1,70 @@
+botplayer:
+  cache:
+    cache_dir: ./data/audio_cache
+    cleanup_threshold: 0.9
+    download_timeout: 300
+    max_concurrent_downloads: 3
+    max_size: 10737418240
+    min_access_interval: 3600
+  discord:
+    command_prefix: '!'
+    idle_timeout: 300
+    max_queue_size: 100
+    reconnect_attempts: 3
+  ffmpeg:
+    audio_codec: libopus
+    extra_args:
+    - -loglevel
+    - error
+    path: ffmpeg
+    video_codec: none
+  logging:
+    backup_count: 5
+    file: data/botplayer.log
+    level: INFO
+    max_size: 10485760
+  playback:
+    audio_bitrate: 128k
+    audio_format: opus
+    auto_play: true
+    buffer_size: 1024
+    default_volume: 0.5
+    timeout: 30
+  playlist_import:
+    allowed_domains:
+    - github.com
+    - gist.githubusercontent.com
+    - gitee.com
+    - music.163.com
+    - y.qq.com
+    max_file_size: 5242880
+    max_songs_per_playlist: 1000
+    timeout: 30
+  plugin_execution:
+    js_timeout: 10
+    max_retries: 3
+    node_path: node
+  plugins:
+    enabled:
+    - bilibili
+    - netease
+    - local
+    plugin_dir: ./data/plugins
+    update_interval: 86400
+  search:
+    max_results: 20
+    result_ranking:
+      artist_match: 30
+      platform_priority:
+        bilibili: 20
+        default: 5
+        local: 10
+        netease: 15
+      title_contains: 50
+      title_exact_match: 100
+    timeout: 10
+  storage:
+    audio_cache_path: data/audio_cache
+    database_path: data/botplayer.db
+    playlists_path: data/playlists
+    plugins_path: data/plugins

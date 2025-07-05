@@ -42,16 +42,31 @@ class AudioCacheManager:
         
         # yt-dlp 配置
         audio_format = self.config.get('audio_format', 'mp3')
+        audio_quality = self.config.get('audio_quality', '192')
+        
         self.ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio',
             'extractaudio': True,
             'audioformat': audio_format,
-            'outtmpl': str(self.temp_dir / '%(id)s.%(ext)s'),
+            'audioquality': audio_quality,
+            'outtmpl': str(self.temp_dir / '%(title).100s.%(id)s.%(ext)s'),
             'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'socket_timeout': self.config.get('download_timeout', 30),
+            'quiet': False,  # 改为False以便调试
+            'no_warnings': False,
+            'ignoreerrors': True,
+            'socket_timeout': self.config.get('download_timeout', 60),
             'retries': 3,
+            'fragment_retries': 3,
+            'extractor_retries': 3,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': audio_format,
+                'preferredquality': audio_quality,
+            }],
+            'postprocessor_args': [
+                '-ar', '44100',  # 采样率
+                '-ac', '2',      # 声道数
+            ],
         }
     
     def _init_database(self):
@@ -154,6 +169,16 @@ class AudioCacheManager:
     async def get_audio_file(self, song: Song) -> Optional[str]:
         """获取音频文件路径，如果不存在则下载并缓存"""
         try:
+            # 特殊处理本地文件
+            if song.platform == 'local':
+                file_path = song.extra.get('file_path', '')
+                if file_path and os.path.exists(file_path):
+                    logger.info(f"Using local file: {file_path}")
+                    return file_path
+                else:
+                    logger.error(f"Local file not found: {file_path}")
+                    return None
+            
             # 检查缓存
             cache_info = self._get_cache_info(song.id)
             if cache_info and os.path.exists(cache_info.file_path):
@@ -177,11 +202,6 @@ class AudioCacheManager:
                 if not song.url:
                     logger.error(f"No URL provided for song: {song.id}")
                     return None
-                
-                # 检查是否是模拟数据
-                if 'mock' in song.id:
-                    # 为测试创建一个简单的音频文件
-                    return await self._create_test_audio_file(song)
                 
                 # 使用 yt-dlp 下载
                 temp_file = await self._download_with_ytdlp(song.url)
@@ -228,85 +248,11 @@ class AudioCacheManager:
                 logger.error(f"Error downloading and caching {song.id}: {e}")
                 return None
 
-    async def _create_test_audio_file(self, song: Song) -> Optional[str]:
-        """为测试创建一个简单的音频文件"""
-        try:
-            # 检查是否已经有测试音频文件
-            test_audio_path = self.cache_dir / "test_music.mp3"
-            
-            if test_audio_path.exists():
-                # 如果已经有测试音频，创建符号链接或复制
-                cache_file = self.cache_dir / f"{song.id}.mp3"
-                if not cache_file.exists():
-                    shutil.copy2(test_audio_path, cache_file)
-                
-                # 保存缓存信息
-                cache_info = AudioCache(
-                    song_id=song.id,
-                    file_path=str(cache_file),
-                    file_size=os.path.getsize(cache_file),
-                    audio_hash=self._calculate_hash(str(cache_file)),
-                    created_at=datetime.now().isoformat(),
-                    last_accessed=datetime.now().isoformat(),
-                    access_count=1,
-                    reference_count=1
-                )
-                self._save_cache_info(cache_info)
-                
-                logger.info(f"Created test audio file for: {song.title}")
-                return str(cache_file)
-            else:
-                # 如果没有测试音频文件，检查项目中是否有
-                project_test_file = Path(__file__).parent.parent / "test_music.mp3"
-                if project_test_file.exists():
-                    # 复制到缓存目录
-                    shutil.copy2(project_test_file, test_audio_path)
-                    return await self._create_test_audio_file(song)  # 递归调用
-                else:
-                    # 创建一个简单的测试音频文件（静音）
-                    return await self._create_silent_audio_file(song)
-                    
-        except Exception as e:
-            logger.error(f"Error creating test audio file: {e}")
-            return None
-
-    async def _create_silent_audio_file(self, song: Song) -> Optional[str]:
-        """创建一个简单的静音音频文件用于测试"""
-        try:
-            # 尝试使用 ffmpeg 创建一个短的静音音频文件
-            cache_file = self.cache_dir / f"{song.id}.mp3"
-            
-            # 创建一个小的示例音频文件
-            # 这里我们创建一个简单的文本文件作为占位符
-            # 在实际应用中，应该使用适当的音频库
-            with open(cache_file, 'wb') as f:
-                # 写入一个简单的MP3头部（非常基础的实现）
-                # 这只是为了测试，实际应用中需要真正的音频数据
-                f.write(b'\xff\xfb\x90\x00' + b'\x00' * 1000)  # 基本的MP3头部 + 数据
-            
-            # 保存缓存信息
-            cache_info = AudioCache(
-                song_id=song.id,
-                file_path=str(cache_file),
-                file_size=os.path.getsize(cache_file),
-                audio_hash=self._calculate_hash(str(cache_file)),
-                created_at=datetime.now().isoformat(),
-                last_accessed=datetime.now().isoformat(),
-                access_count=1,
-                reference_count=1
-            )
-            self._save_cache_info(cache_info)
-            
-            logger.info(f"Created silent test audio file for: {song.title}")
-            return str(cache_file)
-            
-        except Exception as e:
-            logger.error(f"Error creating silent audio file: {e}")
-            return None
-
     async def _download_with_ytdlp(self, url: str) -> Optional[str]:
         """使用 yt-dlp 下载音频"""
         try:
+            logger.info(f"开始下载音频: {url}")
+            
             # 创建临时文件名
             temp_id = hashlib.md5(url.encode()).hexdigest()[:16]
             
@@ -314,25 +260,63 @@ class AudioCacheManager:
             opts = self.ydl_opts.copy()
             opts['outtmpl'] = str(self.temp_dir / f"{temp_id}.%(ext)s")
             
+            # 添加进度钩子
+            def progress_hook(d):
+                if d['status'] == 'downloading':
+                    percent = d.get('_percent_str', 'N/A')
+                    speed = d.get('_speed_str', 'N/A')
+                    logger.info(f"下载进度: {percent}, 速度: {speed}")
+                elif d['status'] == 'finished':
+                    logger.info(f"下载完成: {d['filename']}")
+                elif d['status'] == 'error':
+                    logger.error(f"下载出错: {d.get('error', 'Unknown error')}")
+            
+            opts['progress_hooks'] = [progress_hook]
+            
             with yt_dlp.YoutubeDL(opts) as ydl:
-                # 提取信息
-                info = ydl.extract_info(url, download=False)
-                if not info:
+                try:
+                    # 先提取信息验证URL
+                    logger.info("提取视频信息...")
+                    info = ydl.extract_info(url, download=False)
+                    if not info:
+                        logger.error("无法提取视频信息")
+                        return None
+                    
+                    title = info.get('title', 'Unknown')
+                    duration = info.get('duration', 0)
+                    
+                    logger.info(f"视频信息: {title}, 时长: {duration}秒")
+                    
+                    # 验证时长
+                    if duration and (duration < 10 or duration > 1800):  # 10秒到30分钟
+                        logger.warning(f"视频时长不合适: {duration}秒")
+                        return None
+                    
+                    # 开始下载
+                    logger.info("开始下载音频...")
+                    ydl.download([url])
+                    
+                    # 查找下载的文件
+                    downloaded_files = list(self.temp_dir.glob(f"{temp_id}.*"))
+                    
+                    for file_path in downloaded_files:
+                        if file_path.suffix.lower() in ['.mp3', '.m4a', '.opus', '.ogg', '.wav', '.flac']:
+                            file_size = os.path.getsize(file_path)
+                            logger.info(f"下载成功: {file_path.name}, 大小: {file_size/1024/1024:.2f}MB")
+                            return str(file_path)
+                    
+                    logger.warning(f"未找到有效的音频文件，已下载文件: {[f.name for f in downloaded_files]}")
+                    return None
+                    
+                except yt_dlp.DownloadError as e:
+                    logger.error(f"yt-dlp下载错误: {e}")
+                    return None
+                except Exception as e:
+                    logger.error(f"下载过程中出现异常: {e}")
                     return None
                 
-                # 下载
-                ydl.download([url])
-                
-                # 查找下载的文件
-                for file in self.temp_dir.glob(f"{temp_id}.*"):
-                    if file.suffix in ['.mp3', '.m4a', '.opus', '.ogg', '.wav']:
-                        return str(file)
-                
-                logger.warning(f"Downloaded file not found for URL: {url}")
-                return None
-                
         except Exception as e:
-            logger.error(f"yt-dlp download failed for {url}: {e}")
+            logger.error(f"yt-dlp下载失败，URL: {url}, 错误: {e}")
             return None
 
     async def _find_by_hash(self, audio_hash: str) -> Optional[str]:

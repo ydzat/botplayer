@@ -188,9 +188,33 @@ class PlayQueue:
             return self.get_current_song()
         elif self.play_mode == PlayMode.SHUFFLE:
             return self._next_shuffle()
-        else:  # SEQUENTIAL or REPEAT_ALL
+        elif self.play_mode == PlayMode.SEQUENTIAL:
+            # 顺序播放：只播放一次，到队列末尾就停止
+            next_index = self.current_index + 1
+            if next_index < len(self.songs):
+                self.current_index = next_index
+                return self.get_current_song()
+            else:
+                # 到达队列末尾，停止播放
+                return None
+        else:  # REPEAT_ALL
+            # 列表循环：到队列末尾时回到开头
             self.current_index = (self.current_index + 1) % len(self.songs)
             return self.get_current_song()
+    
+    def has_next_song(self) -> bool:
+        """检查是否有下一首歌曲可播放"""
+        if not self.songs:
+            return False
+        
+        if self.play_mode == PlayMode.REPEAT_ONE:
+            return True  # 单曲循环总是有下一首（当前歌曲）
+        elif self.play_mode == PlayMode.SHUFFLE:
+            return len(self.songs) > 1  # 随机播放需要至少2首歌
+        elif self.play_mode == PlayMode.SEQUENTIAL:
+            return self.current_index + 1 < len(self.songs)  # 顺序播放检查是否到末尾
+        else:  # REPEAT_ALL
+            return True  # 列表循环总是有下一首
     
     def previous_song(self) -> Optional[Song]:
         """获取上一首歌曲"""
@@ -201,7 +225,17 @@ class PlayQueue:
             return self.get_current_song()
         elif self.play_mode == PlayMode.SHUFFLE:
             return self._previous_shuffle()
-        else:  # SEQUENTIAL or REPEAT_ALL
+        elif self.play_mode == PlayMode.SEQUENTIAL:
+            # 顺序播放：只能回到之前的歌曲
+            prev_index = self.current_index - 1
+            if prev_index >= 0:
+                self.current_index = prev_index
+                return self.get_current_song()
+            else:
+                # 到达队列开头，无法继续
+                return None
+        else:  # REPEAT_ALL
+            # 列表循环：到队列开头时回到末尾
             self.current_index = (self.current_index - 1) % len(self.songs)
             return self.get_current_song()
     

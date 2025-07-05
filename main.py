@@ -59,7 +59,7 @@ class BotPlayerPlugin(BasePlugin):
             if any(msg.startswith(cmd) for cmd in [
                 "!play", "!search", "!queue", "!skip", "!pause", "!resume", 
                 "!stop", "!shuffle", "!repeat", "!playlist", "!cache", 
-                "!sources", "!volume", "!now", "!help"
+                "!sources", "!volume", "!now", "!leave", "!help"
             ]):
                 ctx.prevent_default()
                 await self.handle_music_command(ctx, msg)
@@ -114,6 +114,8 @@ class BotPlayerPlugin(BasePlugin):
                 await self.volume_command(ctx, args)
             elif cmd == "!now":
                 await self.now_playing_command(ctx)
+            elif cmd == "!leave":
+                await self.leave_command(ctx, adapter, guild_id)
             
             # 歌单命令
             elif cmd == "!playlist":
@@ -210,13 +212,19 @@ class BotPlayerPlugin(BasePlugin):
 
     async def pause_command(self, ctx: EventContext):
         """暂停命令"""
-        self.player_core.pause()
-        await self.reply_message(ctx, "⏸️ 播放已暂停")
+        try:
+            self.player_core.pause()
+            await self.reply_message(ctx, "⏸️ 播放已暂停")
+        except Exception as e:
+            await self.reply_message(ctx, f"❌ 暂停失败: {str(e)}")
 
     async def resume_command(self, ctx: EventContext):
         """恢复播放命令"""
-        self.player_core.resume()
-        await self.reply_message(ctx, "▶️ 播放已恢复")
+        try:
+            self.player_core.resume()
+            await self.reply_message(ctx, "▶️ 播放已恢复")
+        except Exception as e:
+            await self.reply_message(ctx, f"❌ 恢复播放失败: {str(e)}")
 
     async def stop_command(self, ctx: EventContext, adapter, guild_id: int):
         """停止命令"""
@@ -228,7 +236,8 @@ class BotPlayerPlugin(BasePlugin):
             
             # 停止播放器
             self.player_core.stop()
-            await self.reply_message(ctx, "⏹️ 播放已停止")
+            self.player_core.clear_queue()
+            await self.reply_message(ctx, "⏹️ 播放已停止，队列已清空")
             
         except Exception as e:
             await self.reply_message(ctx, f"❌ 停止失败: {str(e)}")
@@ -236,24 +245,12 @@ class BotPlayerPlugin(BasePlugin):
     async def skip_command(self, ctx: EventContext, adapter, guild_id: int, user_id: int):
         """跳过命令"""
         try:
-            next_song = await self.player_core.play_next()
-            if next_song:
-                # 播放下一首
-                audio_file = await self.player_core.cache_manager.get_audio_file(next_song)
-                if audio_file:
-                    success = await self.play_audio_file(ctx, adapter, guild_id, audio_file)
-                    if success:
-                        await self.reply_message(ctx, 
-                            f"⏭️ 已跳到下一首:\n"
-                            f"**{next_song.title}** - {next_song.artist}"
-                        )
-                    else:
-                        await self.reply_message(ctx, "❌ 播放下一首失败")
-                else:
-                    await self.reply_message(ctx, "❌ 无法获取下一首音频文件")
+            voice_client = await self.get_voice_client(adapter, guild_id)
+            if voice_client and voice_client.is_playing():
+                voice_client.stop()  # 这会触发 after_playing 回调，自动播放下一首
+                await self.reply_message(ctx, "⏭️ 已跳过当前歌曲")
             else:
-                await self.reply_message(ctx, "❌ 队列中没有下一首歌曲")
-                
+                await self.reply_message(ctx, "❌ 当前没有正在播放的歌曲")
         except Exception as e:
             await self.reply_message(ctx, f"❌ 跳过失败: {str(e)}")
 
@@ -263,24 +260,26 @@ class BotPlayerPlugin(BasePlugin):
             queue_info = self.player_core.get_queue_info()
             current_song = self.player_core.player_state.current_song
             
-            if queue_info['total_songs'] == 0:
-                await self.reply_message(ctx, "📝 播放队列为空")
+            if not current_song and queue_info['total_songs'] == 0:
+                await self.reply_message(ctx, "📋 播放队列为空")
                 return
             
-            response = f"🎵 **播放队列** ({queue_info['total_songs']} 首)\n"
-            response += f"🔄 模式: {queue_info['play_mode']}\n\n"
+            response = "📋 播放队列:\n\n"
             
             if current_song:
-                response += f"🎧 **正在播放:**\n"
-                response += f"　　{current_song.title} - {current_song.artist}\n\n"
+                response += f"🎵 正在播放:\n**{current_song.title}** - {current_song.artist}\n\n"
             
-            response += "📋 **队列:**\n"
-            for i, song_data in enumerate(queue_info['songs'][:10], 1):  # 只显示前10首
-                marker = "🔸" if i == queue_info['current_index'] + 1 else "　"
-                response += f"{marker} **{i}.** {song_data['title']} - {song_data['artist']}\n"
-            
-            if queue_info['total_songs'] > 10:
-                response += f"　... 还有 {queue_info['total_songs'] - 10} 首歌曲"
+            if queue_info['total_songs'] > 0:
+                response += f"⏭️ 队列中的歌曲 ({queue_info['total_songs']}):\n"
+                for i, song_dict in enumerate(queue_info['songs'][:10], 1):  # 只显示前10首
+                    response += f"{i}. {song_dict['title']} - {song_dict['artist']}\n"
+                
+                if queue_info['total_songs'] > 10:
+                    response += f"... 还有 {queue_info['total_songs'] - 10} 首歌曲\n"
+                
+                response += f"\n🔀 播放模式: {queue_info['play_mode']}"
+            else:
+                response += "⏭️ 队列为空"
             
             await self.reply_message(ctx, response)
             
@@ -289,50 +288,62 @@ class BotPlayerPlugin(BasePlugin):
 
     async def shuffle_command(self, ctx: EventContext):
         """随机播放命令"""
-        self.player_core.shuffle_queue()
-        await self.reply_message(ctx, "🔀 队列已打乱")
+        try:
+            self.player_core.shuffle_queue()
+            await self.reply_message(ctx, "🔀 队列已打乱")
+        except Exception as e:
+            await self.reply_message(ctx, f"❌ 打乱队列失败: {str(e)}")
 
     async def repeat_command(self, ctx: EventContext, args: List[str]):
         """循环模式命令"""
-        if not args:
-            current_mode = self.player_core.player_state.queue.play_mode
-            await self.reply_message(ctx, f"🔄 当前播放模式: {current_mode.value}")
-            return
-        
-        mode_arg = args[0].lower()
-        if mode_arg in ['off', 'none', '关闭']:
-            self.player_core.set_play_mode(PlayMode.SEQUENTIAL)
-            await self.reply_message(ctx, "🔄 循环模式: 关闭")
-        elif mode_arg in ['all', 'playlist', '列表']:
-            self.player_core.set_play_mode(PlayMode.REPEAT_ALL)
-            await self.reply_message(ctx, "🔄 循环模式: 列表循环")
-        elif mode_arg in ['one', 'single', '单曲']:
-            self.player_core.set_play_mode(PlayMode.REPEAT_ONE)
-            await self.reply_message(ctx, "🔄 循环模式: 单曲循环")
-        elif mode_arg in ['shuffle', 'random', '随机']:
-            self.player_core.set_play_mode(PlayMode.SHUFFLE)
-            await self.reply_message(ctx, "🔄 循环模式: 随机播放")
-        else:
-            await self.reply_message(ctx, "❌ 无效的循环模式\n可用模式: off, all, one, shuffle")
+        try:
+            if not args:
+                # 显示当前循环模式
+                current_mode = self.player_core.player_state.queue.play_mode
+                await self.reply_message(ctx, f"🔁 当前播放模式: {current_mode.value}")
+                return
+            
+            mode = args[0].lower()
+            if mode in ['off', 'none', '关闭']:
+                self.player_core.set_play_mode(PlayMode.SEQUENTIAL)
+                await self.reply_message(ctx, "🔁 循环模式: 关闭")
+            elif mode in ['all', 'list', '列表', '全部']:
+                self.player_core.set_play_mode(PlayMode.REPEAT_ALL)
+                await self.reply_message(ctx, "🔁 循环模式: 列表循环")
+            elif mode in ['one', 'single', '单曲']:
+                self.player_core.set_play_mode(PlayMode.REPEAT_ONE)
+                await self.reply_message(ctx, "🔁 循环模式: 单曲循环")
+            elif mode in ['shuffle', 'random', '随机']:
+                self.player_core.set_play_mode(PlayMode.SHUFFLE)
+                await self.reply_message(ctx, "🔁 循环模式: 随机播放")
+            else:
+                await self.reply_message(ctx, "❌ 无效的循环模式\n可用模式: off/all/one/shuffle")
+                
+        except Exception as e:
+            await self.reply_message(ctx, f"❌ 设置循环模式失败: {str(e)}")
 
     async def volume_command(self, ctx: EventContext, args: List[str]):
         """音量命令"""
-        if not args:
-            volume = self.player_core.player_state.volume
-            await self.reply_message(ctx, f"🔊 当前音量: {int(volume * 100)}%")
-            return
-        
         try:
-            volume = int(args[0])
-            if volume < 0 or volume > 100:
-                await self.reply_message(ctx, "❌ 音量必须在 0-100 之间")
+            if not args:
+                volume = self.player_core.player_state.volume
+                await self.reply_message(ctx, f"🔊 当前音量: {int(volume * 100)}%")
                 return
             
-            self.player_core.set_volume(volume / 100.0)
-            await self.reply_message(ctx, f"🔊 音量已设置为: {volume}%")
-            
-        except ValueError:
-            await self.reply_message(ctx, "❌ 请提供有效的音量值 (0-100)")
+            try:
+                volume = float(args[0])
+                if volume < 0 or volume > 100:
+                    await self.reply_message(ctx, "❌ 音量范围: 0-100")
+                    return
+                
+                self.player_core.set_volume(volume / 100.0)
+                await self.reply_message(ctx, f"🔊 音量设置为: {int(volume)}%")
+                
+            except ValueError:
+                await self.reply_message(ctx, "❌ 无效的音量值\n用法: `!volume <0-100>`")
+                
+        except Exception as e:
+            await self.reply_message(ctx, f"❌ 设置音量失败: {str(e)}")
 
     async def now_playing_command(self, ctx: EventContext):
         """当前播放命令"""
@@ -437,31 +448,35 @@ class BotPlayerPlugin(BasePlugin):
 
     async def cache_command(self, ctx: EventContext, args: List[str]):
         """缓存管理命令"""
-        if not args:
-            # 显示缓存状态
-            stats = self.player_core.cache_manager.get_cache_stats()
-            response = f"💾 **缓存状态:**\n"
-            response += f"📁 文件数量: {stats['total_files']}\n"
-            response += f"💽 使用空间: {stats.get('total_size_mb', 0):.1f} MB / {stats.get('max_size_mb', 0):.1f} MB\n"
-            response += f"📊 使用率: {stats.get('usage_percent', 0):.1f}%\n"
-            response += f"📈 平均访问次数: {stats.get('avg_access_count', 0):.1f}\n"
+        try:
+            if not args:
+                # 显示缓存状态
+                stats = self.player_core.cache_manager.get_cache_stats()
+                response = f"💾 **缓存状态:**\n"
+                response += f"📁 文件数量: {stats['total_files']}\n"
+                response += f"💽 使用空间: {stats.get('total_size_mb', 0):.1f} MB / {stats.get('max_size_mb', 0):.1f} MB\n"
+                response += f"📊 使用率: {stats.get('usage_percent', 0):.1f}%\n"
+                response += f"📈 平均访问次数: {stats.get('avg_access_count', 0):.1f}\n"
+                
+                await self.reply_message(ctx, response)
+                return
             
-            await self.reply_message(ctx, response)
-            return
-        
-        subcommand = args[0].lower()
-        
-        if subcommand == "clear":
-            success = self.player_core.cache_manager.clear_cache()
-            if success:
-                await self.reply_message(ctx, "✅ 缓存已清空")
+            subcommand = args[0].lower()
+            
+            if subcommand == "clear":
+                success = self.player_core.cache_manager.clear_cache()
+                if success:
+                    await self.reply_message(ctx, "✅ 缓存已清空")
+                else:
+                    await self.reply_message(ctx, "❌ 清空缓存失败")
+            elif subcommand == "cleanup":
+                removed_count = self.player_core.cache_manager.cleanup_orphaned_files()
+                await self.reply_message(ctx, f"✅ 已清理 {removed_count} 个孤立文件")
             else:
-                await self.reply_message(ctx, "❌ 清空缓存失败")
-        elif subcommand == "cleanup":
-            removed_count = self.player_core.cache_manager.cleanup_orphaned_files()
-            await self.reply_message(ctx, f"✅ 已清理 {removed_count} 个孤立文件")
-        else:
-            await self.reply_message(ctx, "❌ 无效的缓存命令\n可用命令: clear, cleanup")
+                await self.reply_message(ctx, "❌ 无效的缓存命令\n可用命令: clear, cleanup")
+                
+        except Exception as e:
+            await self.reply_message(ctx, f"❌ 缓存操作失败: {str(e)}")
 
     async def sources_command(self, ctx: EventContext):
         """音源命令"""
@@ -561,7 +576,11 @@ class BotPlayerPlugin(BasePlugin):
                 else:
                     print('音频播放完成')
                     # 播放完成后尝试播放下一首
-                    asyncio.create_task(self.handle_song_finished(ctx, adapter, guild_id))
+                    # 使用同步方式处理，避免异步上下文问题
+                    try:
+                        self.handle_song_finished_sync(ctx, adapter, guild_id)
+                    except Exception as e:
+                        print(f"处理歌曲完成事件时出错: {e}")
             
             # 播放音频文件
             ffmpeg_options = {
@@ -581,41 +600,141 @@ class BotPlayerPlugin(BasePlugin):
     async def handle_song_finished(self, ctx: EventContext, adapter, guild_id: int):
         """处理歌曲播放完成"""
         try:
-            # 播放下一首歌
-            next_song = await self.player_core.play_next()
-            if next_song:
-                # 获取音频文件并播放
-                audio_file = await self.player_core.cache_manager.get_audio_file(next_song)
-                if audio_file:
-                    success = await self.play_audio_file(ctx, adapter, guild_id, audio_file)
-                    if success:
-                        await self.reply_message(ctx, 
-                            f"🎵 自动播放下一首:\n"
-                            f"**{next_song.title}**\n"
-                            f"👤 {next_song.artist}\n"
-                            f"📀 {next_song.album}\n"
-                            f"🎧 {next_song.platform}"
-                        )
+            print("音频播放完成")
+            
+            # 检查播放模式和队列状态
+            current_mode = self.player_core.player_state.queue.play_mode
+            has_next = self.player_core.player_state.queue.has_next_song()
+            
+            # 根据播放模式决定是否播放下一首
+            if has_next and current_mode != PlayMode.SEQUENTIAL:
+                # 除了顺序播放，其他模式都应该继续播放
+                should_play_next = True
+            elif current_mode == PlayMode.SEQUENTIAL:
+                # 顺序播放：检查是否真的有下一首
+                should_play_next = has_next
             else:
-                # 队列为空，停止播放
+                should_play_next = False
+            
+            if should_play_next:
+                if current_mode == PlayMode.REPEAT_ONE:
+                    # 单曲循环：重播当前歌曲
+                    current_song = self.player_core.player_state.current_song
+                    if current_song:
+                        audio_file = await self.player_core.cache_manager.get_audio_file(current_song)
+                        if audio_file:
+                            success = await self.play_audio_file(ctx, adapter, guild_id, audio_file)
+                            if success:
+                                await self.safe_send_message(ctx, 
+                                    f"🔁 单曲循环:\n"
+                                    f"**{current_song.title}**\n"
+                                    f"👤 {current_song.artist}"
+                                )
+                else:
+                    # 播放下一首歌
+                    next_song = await self.player_core.play_next()
+                    if next_song:
+                        audio_file = await self.player_core.cache_manager.get_audio_file(next_song)
+                        if audio_file:
+                            success = await self.play_audio_file(ctx, adapter, guild_id, audio_file)
+                            if success:
+                                await self.safe_send_message(ctx, 
+                                    f"🎵 自动播放下一首:\n"
+                                    f"**{next_song.title}**\n"
+                                    f"👤 {next_song.artist}\n"
+                                    f"📀 {next_song.album}\n"
+                                    f"🎧 {next_song.platform}"
+                                )
+                    else:
+                        # 没有下一首了
+                        self.player_core.stop()
+                        await self.safe_send_message(ctx, "🎵 播放队列已结束")
+            else:
+                # 不应该继续播放
                 self.player_core.stop()
-                await self.reply_message(ctx, "🎵 播放队列已结束")
+                await self.safe_send_message(ctx, "🎵 播放完成")
                 
         except Exception as e:
             print(f"Error handling song finished: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def handle_song_finished_sync(self, ctx: EventContext, adapter, guild_id: int):
+        """同步处理歌曲播放完成"""
+        try:
+            print("音频播放完成")
+            
+            # 检查播放模式和队列状态
+            current_mode = self.player_core.player_state.queue.play_mode
+            has_next = self.player_core.player_state.queue.has_next_song()
+            
+            # 根据播放模式决定是否播放下一首
+            if has_next and current_mode != PlayMode.SEQUENTIAL:
+                # 除了顺序播放，其他模式都应该继续播放
+                should_play_next = True
+            elif current_mode == PlayMode.SEQUENTIAL:
+                # 顺序播放：检查是否真的有下一首
+                should_play_next = has_next
+            else:
+                should_play_next = False
+            
+            # 只进行播放逻辑，不发送消息
+            if should_play_next:
+                if current_mode == PlayMode.REPEAT_ONE:
+                    print("🔁 单曲循环模式")
+                    # TODO: 重播当前歌曲的逻辑需要异步处理
+                else:
+                    print("🎵 准备播放下一首")
+                    # TODO: 播放下一首的逻辑需要异步处理
+            else:
+                # 不应该继续播放
+                self.player_core.stop()
+                print("🎵 播放完成，已停止")
+                
+        except Exception as e:
+            print(f"Error handling song finished sync: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def safe_send_message(self, ctx: EventContext, text: str):
+        """安全发送消息，避免异步上下文管理器错误"""
+        from pkg.platform.types.message import MessageChain, Plain
+        
+        try:
+            # 创建消息链
+            message_chain = MessageChain([Plain(text=text)])
+            
+            # 发送消息到Discord平台
+            await ctx.send_message(
+                ctx.event.launcher_type,
+                str(ctx.event.launcher_id),
+                message_chain
+            )
+                
+        except Exception as e:
+            print(f"发送消息失败: {e}")
+            # 备用方案：打印到控制台
+            print(f"[BotPlayer消息] {text}")
 
     async def reply_message(self, ctx: EventContext, text: str):
         """回复消息"""
         from pkg.platform.types.message import MessageChain, Plain
         
         try:
+            # 创建消息链
+            message_chain = MessageChain([Plain(text=text)])
+            
+            # 正常发送消息
             await ctx.send_message(
                 ctx.event.launcher_type,
                 str(ctx.event.launcher_id),
-                MessageChain([Plain(text=text)])
+                message_chain
             )
+                
         except Exception as e:
             print(f"发送消息失败: {e}")
+            # 备用方案：打印到控制台
+            print(f"[BotPlayer消息] {text}")
 
     def __del__(self):
         """清理资源"""

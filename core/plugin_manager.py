@@ -7,11 +7,14 @@ import json
 import asyncio
 import subprocess
 import logging
+import re
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import requests
 import tempfile
 from .models import Song
+from .bilibili_source import BilibiliMusicSource
+from .musicfree_loader import MusicFreePluginLoader
 import urllib.parse
 
 logger = logging.getLogger(__name__)
@@ -24,7 +27,10 @@ class PluginManager:
         self.plugin_dir = Path(plugin_dir)
         self.config = config or {}
         self.plugins: Dict[str, dict] = {}
-        self.js_runtime = None
+        
+        # 初始化真实的音源实现
+        self.bilibili_source = BilibiliMusicSource()
+        self.musicfree_loader = MusicFreePluginLoader(str(self.plugin_dir))
         
         # 创建插件目录
         self.plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -38,23 +44,70 @@ class PluginManager:
             # 加载内置插件
             self._load_builtin_plugins()
             
-            # 加载外部 MusicFree 插件
-            self._load_musicfree_plugins()
-            
             logger.info(f"Loaded {len(self.plugins)} audio source plugins")
             
         except Exception as e:
             logger.error(f"Error loading plugins: {e}")
     
+    async def initialize_async_plugins(self):
+        """初始化异步插件（需要在异步环境中调用）"""
+        try:
+            # 暂时禁用 MusicFree 插件，专注于内置插件
+            logger.info("MusicFree 插件加载已暂时禁用，使用内置插件")
+            # 未来可以重新启用 MusicFree 插件加载
+        except Exception as e:
+            logger.error(f"MusicFree插件初始化失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _load_musicfree_plugins(self):
+        """异步加载 MusicFree 插件"""
+        try:
+            # 暂时禁用 MusicFree 插件加载，因为需要复杂的 JavaScript 环境
+            # 当前专注于内置插件的稳定工作
+            logger.info("MusicFree 插件加载已暂时禁用，使用内置插件")
+            
+            # 确保方法正确返回（避免 await None 错误）
+            return None
+            
+            # TODO: 未来可以重新启用这个功能
+            """
+            # 查找 plugins.json 文件
+            current_dir = Path.cwd()
+            plugins_json_paths = [
+                current_dir / "plugins.json",
+                self.plugin_dir.parent / "plugins.json",
+                self.plugin_dir.parent.parent / "plugins.json"
+            ]
+            
+            for plugins_json_path in plugins_json_paths:
+                if plugins_json_path.exists():
+                    logger.info(f"找到 plugins.json: {plugins_json_path}")
+                    await self.musicfree_loader.load_plugins_from_json(str(plugins_json_path))
+                    
+                    # 将加载的插件添加到插件列表
+                    musicfree_plugins = self.musicfree_loader.get_loaded_plugins()
+                    for plugin in musicfree_plugins:
+                        self.plugins[f"musicfree_{plugin['name']}"] = plugin
+                    
+                    logger.info(f"从 MusicFree 加载了 {len(musicfree_plugins)} 个插件")
+                    break
+            else:
+                logger.info("未找到 plugins.json 文件")
+            """
+                
+        except Exception as e:
+            logger.error(f"加载 MusicFree 插件失败: {e}")
+    
     def _load_builtin_plugins(self):
         """加载内置插件"""
-        # Bilibili 插件
+        # 改进的 Bilibili 插件
         self.plugins['bilibili'] = {
             'name': 'bilibili',
-            'version': '1.0.0',
-            'author': 'BotPlayer',
-            'description': 'Bilibili音频搜索',
-            'type': 'builtin',
+            'version': '2.0.0',
+            'author': 'BotPlayer Enhanced',
+            'description': '基于真实 API 的 Bilibili 音频搜索',
+            'type': 'builtin_enhanced',
             'enabled': True
         }
         
@@ -68,7 +121,7 @@ class PluginManager:
             'enabled': True
         }
         
-        # 网易云音乐插件（模拟）
+        # 网易云音乐插件
         self.plugins['netease'] = {
             'name': 'netease',
             'version': '1.0.0',
@@ -176,10 +229,10 @@ class PluginManager:
             if not plugin:
                 return []
             
-            if plugin['type'] == 'builtin':
+            if plugin['type'] == 'builtin' or plugin['type'] == 'builtin_enhanced':
                 return await self._search_builtin(plugin_name, query, limit)
             elif plugin['type'] == 'musicfree':
-                return await self._search_musicfree(plugin, query, limit)
+                return await self.musicfree_loader.search_in_plugin(plugin_name, query, 1, 'music')
             
         except Exception as e:
             logger.error(f"Error searching in plugin {plugin_name}: {e}")
@@ -189,7 +242,7 @@ class PluginManager:
     async def _search_builtin(self, plugin_name: str, query: str, limit: int) -> List[Song]:
         """内置插件搜索"""
         if plugin_name == 'bilibili':
-            return await self._search_bilibili(query, limit)
+            return await self.bilibili_source.search(query, 1, limit)
         elif plugin_name == 'netease':
             return await self._search_netease(query, limit)
         elif plugin_name == 'local':
@@ -198,115 +251,17 @@ class PluginManager:
         return []
     
     async def _search_bilibili(self, query: str, limit: int) -> List[Song]:
-        """Bilibili 搜索"""
+        """使用 MusicFree Bilibili 插件搜索"""
         try:
-            # 真实的 Bilibili 搜索实现
-            import aiohttp
-            
-            # Bilibili 搜索 API
-            search_url = "https://api.bilibili.com/x/web-interface/search/type"
-            params = {
-                'search_type': 'video',
-                'keyword': f"{query} 音乐",
-                'order': 'totalrank',
-                'duration': 1,  # 0-10分钟
-                'page': 1,
-                'pagesize': min(limit, 20)
-            }
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Referer': 'https://www.bilibili.com'
-            }
-            
-            results = []
-            
-            try:
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                    async with session.get(search_url, params=params, headers=headers) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            
-                            if data.get('code') == 0 and 'data' in data:
-                                search_results = data['data'].get('result', [])
-                                
-                                for item in search_results:
-                                    if len(results) >= limit:
-                                        break
-                                    
-                                    # 构造歌曲信息
-                                    duration = self._parse_duration(item.get('duration', '0:00'))
-                                    
-                                    # 过滤太短或太长的视频
-                                    if duration < 30 or duration > 600:  # 30秒到10分钟
-                                        continue
-                                    
-                                    song = Song(
-                                        id=f"BV{item.get('bvid', '')}",
-                                        title=self._clean_title(item.get('title', '')),
-                                        artist=item.get('author', '未知艺术家'),
-                                        album='Bilibili',
-                                        duration=duration,
-                                        platform='bilibili',
-                                        artwork=f"https:{item.get('pic', '')}" if item.get('pic', '').startswith('//') else item.get('pic', ''),
-                                        url=f"https://www.bilibili.com/video/{item.get('bvid', '')}",
-                                        extra={
-                                            'bvid': item.get('bvid', ''),
-                                            'aid': item.get('aid', ''),
-                                            'view_count': item.get('play', 0),
-                                            'description': item.get('description', '')
-                                        }
-                                    )
-                                    results.append(song)
-            
-            except Exception as api_error:
-                logger.warning(f"Bilibili API error, falling back to mock data: {api_error}")
-                # API 失败时使用模拟数据
-                results = await self._get_bilibili_mock_data(query, limit)
-            
-            # 如果没有结果，使用模拟数据
-            if not results:
-                results = await self._get_bilibili_mock_data(query, limit)
-            
-            return results
-            
+            # 使用新的 MusicFree 插件搜索
+            if hasattr(self, 'musicfree_bilibili') and self.musicfree_bilibili:
+                return await self.musicfree_bilibili.search(query, 1, limit)
+            else:
+                logger.warning("MusicFree Bilibili 插件未加载")
+                return []
         except Exception as e:
             logger.error(f"Bilibili search error: {e}")
-            return await self._get_bilibili_mock_data(query, limit)
-    
-    async def _get_bilibili_mock_data(self, query: str, limit: int) -> List[Song]:
-        """获取 Bilibili 模拟数据"""
-        mock_results = [
-            {
-                'id': f'BV1{i}mock{hash(query) % 10000}',
-                'title': f'{query} - 示例歌曲 {i}',
-                'artist': f'艺术家 {i}',
-                'album': 'Bilibili',
-                'duration': 180 + i * 10,
-                'platform': 'bilibili',
-                'artwork': f'http://example.com/artwork{i}.jpg',
-                'url': f'https://www.bilibili.com/video/BV1{i}mock{hash(query) % 10000}',
-                'bvid': f'BV1{i}mock{hash(query) % 10000}'
-            }
-            for i in range(min(limit, 3))
-        ]
-        
-        results = []
-        for item in mock_results:
-            song = Song(
-                id=item['id'],
-                title=item['title'],
-                artist=item['artist'],
-                album=item['album'],
-                duration=item['duration'],
-                platform=item['platform'],
-                artwork=item['artwork'],
-                url=item['url'],
-                extra={'bvid': item.get('bvid', '')}
-            )
-            results.append(song)
-        
-        return results
+            return []
     
     def _parse_duration(self, duration_str: str) -> int:
         """解析时长字符串为秒数"""
@@ -333,41 +288,15 @@ class PluginManager:
         return clean_title
     
     async def _search_netease(self, query: str, limit: int) -> List[Song]:
-        """网易云音乐搜索（模拟）"""
+        """网易云音乐搜索"""
         try:
-            # 模拟网易云音乐搜索结果
-            results = []
+            # 真实的网易云音乐搜索实现
+            import aiohttp
             
-            mock_results = [
-                {
-                    'id': f'netease_{i}_{hash(query + str(i)) % 100000}',
-                    'title': f'{query} - 网易版本 {i}',
-                    'artist': f'网易艺术家 {i}',
-                    'album': f'专辑 {i}',
-                    'duration': 200 + i * 15,
-                    'platform': 'netease',
-                    'artwork': f'http://example.com/netease_artwork{i}.jpg',
-                    'url': f'http://music.163.com/song/{i}123456',
-                    'song_id': f'{i}123456'
-                }
-                for i in range(min(limit, 2))
-            ]
-            
-            for item in mock_results:
-                song = Song(
-                    id=item['id'],
-                    title=item['title'],
-                    artist=item['artist'],
-                    album=item['album'],
-                    duration=item['duration'],
-                    platform=item['platform'],
-                    artwork=item['artwork'],
-                    url=item['url'],
-                    extra={'song_id': item.get('song_id', '')}
-                )
-                results.append(song)
-            
-            return results
+            # 网易云音乐 API (需要使用第三方API或自建服务)
+            # 这里暂时返回空结果，用户可以自行实现真实的API调用
+            logger.warning("网易云音乐搜索功能需要配置真实的API，当前返回空结果")
+            return []
             
         except Exception as e:
             logger.error(f"Netease search error: {e}")
@@ -379,11 +308,28 @@ class PluginManager:
             results = []
             
             # 搜索本地音频文件
-            audio_extensions = ['.mp3', '.m4a', '.opus', '.ogg', '.wav', '.flac']
-            music_dirs = ['./music', './audio', './downloads']
+            audio_extensions = ['.mp3', '.m4a', '.opus', '.ogg', '.wav', '.flac', '.aac']
+            
+            # 扩展搜索目录
+            music_dirs = [
+                './music', './audio', './downloads', './Music', './Audio',
+                os.path.expanduser('~/Music'), os.path.expanduser('~/Downloads'),
+                './data/audio', './data/music'
+            ]
+            
+            # 添加当前目录和插件目录
+            current_dir = os.getcwd()
+            plugin_dir = os.path.dirname(os.path.abspath(__file__))
+            music_dirs.extend([
+                os.path.join(current_dir, 'music'),
+                os.path.join(plugin_dir, '..', 'data'),
+                os.path.join(plugin_dir, '..', 'data', 'music')
+            ])
             
             for music_dir in music_dirs:
                 if os.path.exists(music_dir):
+                    logger.info(f"搜索本地音乐目录: {music_dir}")
+                    
                     for root, dirs, files in os.walk(music_dir):
                         for file in files:
                             if any(file.lower().endswith(ext) for ext in audio_extensions):
@@ -391,26 +337,98 @@ class PluginManager:
                                     file_path = os.path.join(root, file)
                                     file_name = os.path.splitext(file)[0]
                                     
+                                    # 尝试从文件名解析艺术家和标题
+                                    artist, title = self._parse_filename(file_name)
+                                    
+                                    # 获取文件大小
+                                    file_size = os.path.getsize(file_path)
+                                    
                                     song = Song(
                                         id=f'local_{hash(file_path)}',
-                                        title=file_name,
-                                        artist='本地文件',
+                                        title=title,
+                                        artist=artist,
                                         album='本地音乐',
-                                        duration=0,  # 需要解析音频文件获取时长
+                                        duration=0,  # 可以用mutagen库解析音频文件获取时长
                                         platform='local',
                                         url=f'file://{os.path.abspath(file_path)}',
-                                        extra={'file_path': file_path}
+                                        extra={
+                                            'file_path': os.path.abspath(file_path),
+                                            'file_size': file_size,
+                                            'file_ext': os.path.splitext(file)[1]
+                                        }
                                     )
                                     results.append(song)
                                     
+                                    logger.info(f"找到本地音乐: {title} - {artist}")
+                                    
                                     if len(results) >= limit:
                                         return results
+            
+            if not results:
+                logger.warning(f"未找到包含'{query}'的本地音乐文件")
+                # 列出所有可用的音乐文件（调试用）
+                self._list_available_music()
             
             return results
             
         except Exception as e:
             logger.error(f"Local search error: {e}")
             return []
+    
+    def _parse_filename(self, filename: str) -> tuple:
+        """从文件名解析艺术家和标题"""
+        # 尝试多种格式
+        patterns = [
+            r'(.+?)\s*-\s*(.+)',  # 艺术家 - 标题
+            r'(.+?)\s*_\s*(.+)',  # 艺术家_标题
+            r'(.+?)\s*\|\s*(.+)', # 艺术家|标题
+        ]
+        
+        for pattern in patterns:
+            match = re.match(pattern, filename)
+            if match:
+                return match.group(1).strip(), match.group(2).strip()
+        
+        # 如果没有匹配到，整个文件名作为标题
+        return '未知艺术家', filename
+    
+    def _list_available_music(self):
+        """列出所有可用的音乐文件（调试用）"""
+        try:
+            audio_extensions = ['.mp3', '.m4a', '.opus', '.ogg', '.wav', '.flac', '.aac']
+            music_dirs = [
+                './music', './audio', './downloads', './Music', './Audio',
+                os.path.expanduser('~/Music'), os.path.expanduser('~/Downloads'),
+                './data/audio', './data/music'
+            ]
+            
+            logger.info("=== 可用音乐文件列表 ===")
+            total_files = 0
+            
+            for music_dir in music_dirs:
+                if os.path.exists(music_dir):
+                    logger.info(f"目录: {music_dir}")
+                    files_in_dir = []
+                    
+                    for root, dirs, files in os.walk(music_dir):
+                        for file in files:
+                            if any(file.lower().endswith(ext) for ext in audio_extensions):
+                                files_in_dir.append(file)
+                                total_files += 1
+                    
+                    if files_in_dir:
+                        for file in files_in_dir[:10]:  # 只显示前10个
+                            logger.info(f"  - {file}")
+                        if len(files_in_dir) > 10:
+                            logger.info(f"  ... 还有 {len(files_in_dir) - 10} 个文件")
+                    else:
+                        logger.info("  (空目录)")
+            
+            logger.info(f"总共找到 {total_files} 个音乐文件")
+            logger.info("=== 列表结束 ===")
+            
+        except Exception as e:
+            logger.error(f"列出音乐文件时出错: {e}")
     
     async def _search_musicfree(self, plugin: dict, query: str, limit: int) -> List[Song]:
         """MusicFree 插件搜索"""

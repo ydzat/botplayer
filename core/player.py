@@ -52,6 +52,15 @@ class BotPlayerCore:
         # 加载保存的状态
         self._load_state()
     
+    async def initialize_async(self):
+        """异步初始化，需要在异步环境中调用"""
+        try:
+            # 初始化 MusicFree 插件
+            await self.plugin_manager.initialize_async_plugins()
+            logger.info("异步插件初始化完成")
+        except Exception as e:
+            logger.error(f"异步初始化失败: {e}")
+    
     def _init_database(self):
         """初始化数据库"""
         with sqlite3.connect(self.db_path) as conn:
