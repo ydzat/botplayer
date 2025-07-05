@@ -773,3 +773,69 @@ class BotPlayerCore:
         except Exception as e:
             logger.error(f"Error importing playlist from file {file_path}: {e}")
             return None
+    
+    async def import_musicfree_backup_from_content(self, content: str) -> Optional[Playlist]:
+        """从 MusicFree 备份内容导入歌单"""
+        try:
+            # 使用歌单导入器从内容导入
+            playlist = await self.playlist_importer.import_musicfree_from_content(content)
+            if not playlist:
+                logger.error("Failed to parse MusicFree backup content")
+                return None
+            
+            # 保存到数据库
+            saved_id = await self.save_playlist(playlist)
+            if saved_id:
+                logger.info(f"Successfully imported MusicFree playlist: {playlist.name}")
+                return playlist
+            else:
+                logger.error(f"Failed to save MusicFree playlist: {playlist.name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error importing MusicFree backup from content: {e}")
+            return None
+
+    async def import_m3u_from_content(self, content: str) -> Optional[Playlist]:
+        """从 M3U 内容导入歌单"""
+        try:
+            # 使用歌单导入器从内容导入
+            playlist = await self.playlist_importer.import_m3u_from_content(content)
+            if not playlist:
+                logger.error("Failed to parse M3U content")
+                return None
+            
+            # 保存到数据库
+            saved_id = await self.save_playlist(playlist)
+            if saved_id:
+                logger.info(f"Successfully imported M3U playlist: {playlist.name}")
+                return playlist
+            else:
+                logger.error(f"Failed to save M3U playlist: {playlist.name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error importing M3U from content: {e}")
+            return None
+
+    async def import_pls_from_content(self, content: str) -> Optional[Playlist]:
+        """从 PLS 内容导入歌单"""
+        try:
+            # 使用歌单导入器从内容导入
+            playlist = await self.playlist_importer.import_pls_from_content(content)
+            if not playlist:
+                logger.error("Failed to parse PLS content")
+                return None
+            
+            # 保存到数据库
+            saved_id = await self.save_playlist(playlist)
+            if saved_id:
+                logger.info(f"Successfully imported PLS playlist: {playlist.name}")
+                return playlist
+            else:
+                logger.error(f"Failed to save PLS playlist: {playlist.name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error importing PLS from content: {e}")
+            return None

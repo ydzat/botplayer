@@ -108,6 +108,153 @@ class PlaylistImporter:
             logger.error(f"MusicFree备份导入失败: {e}")
             return []
     
+    async def import_musicfree_from_content(self, content: str) -> Optional[Playlist]:
+        """从 MusicFree 备份内容字符串导入歌单"""
+        try:
+            # 解析 JSON 内容
+            json_data = json.loads(content)
+            if not json_data:
+                logger.error("Failed to parse JSON content")
+                return None
+            
+            # 使用现有的解析方法
+            playlist = self._parse_musicfree_backup(json_data, "content")
+            return playlist
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON content: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error importing MusicFree from content: {e}")
+            return None
+
+    async def import_m3u_from_content(self, content: str) -> Optional[Playlist]:
+        """从 M3U 内容字符串导入歌单"""
+        try:
+            lines = content.strip().split('\n')
+            playlist = Playlist(
+                id="",
+                name="M3U Playlist", 
+                description="Imported from M3U content",
+                creator="BotPlayer"
+            )
+            
+            current_song = {}
+            for line in lines:
+                line = line.strip()
+                if line.startswith('#EXTINF:'):
+                    # 解析歌曲信息
+                    parts = line[8:].split(',', 1)
+                    if len(parts) == 2:
+                        duration_str, title = parts
+                        try:
+                            duration = int(float(duration_str.split(' ')[0]))
+                        except:
+                            duration = 0
+                        current_song = {'title': title.strip(), 'duration': duration}
+                elif line and not line.startswith('#'):
+                    # 这是一个URL
+                    if current_song:
+                        song = Song(
+                            id=line,
+                            title=current_song.get('title', 'Unknown'),
+                            artist='Unknown',
+                            album='',
+                            duration=current_song.get('duration', 0),
+                            platform='local',
+                            url=line
+                        )
+                        playlist.add_song(song)
+                        current_song = {}
+                    else:
+                        # 没有EXTINF信息，直接创建歌曲
+                        song = Song(
+                            id=line,
+                            title=line.split('/')[-1],
+                            artist='Unknown',
+                            album='',
+                            duration=0,
+                            platform='local',
+                            url=line
+                        )
+                        playlist.add_song(song)
+            
+            logger.info(f"Imported M3U playlist with {len(playlist.songs)} songs")
+            return playlist
+            
+        except Exception as e:
+            logger.error(f"Error importing M3U from content: {e}")
+            return None
+
+    async def import_pls_from_content(self, content: str) -> Optional[Playlist]:
+        """从 PLS 内容字符串导入歌单"""
+        try:
+            lines = content.strip().split('\n')
+            playlist = Playlist(
+                id="",
+                name="PLS Playlist",
+                description="Imported from PLS content", 
+                creator="BotPlayer"
+            )
+            
+            songs_data = {}
+            for line in lines:
+                line = line.strip()
+                if line.startswith('File'):
+                    # File1=url
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        key = parts[0].lower()
+                        url = parts[1]
+                        song_num = key.replace('file', '')
+                        if song_num not in songs_data:
+                            songs_data[song_num] = {}
+                        songs_data[song_num]['url'] = url
+                elif line.startswith('Title'):
+                    # Title1=title
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        key = parts[0].lower()
+                        title = parts[1]
+                        song_num = key.replace('title', '')
+                        if song_num not in songs_data:
+                            songs_data[song_num] = {}
+                        songs_data[song_num]['title'] = title
+                elif line.startswith('Length'):
+                    # Length1=duration
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        key = parts[0].lower()
+                        try:
+                            duration = int(parts[1])
+                        except:
+                            duration = 0
+                        song_num = key.replace('length', '')
+                        if song_num not in songs_data:
+                            songs_data[song_num] = {}
+                        songs_data[song_num]['duration'] = duration
+            
+            # 创建歌曲对象
+            for song_num, data in songs_data.items():
+                if 'url' in data:
+                    song = Song(
+                        id=data['url'],
+                        title=data.get('title', 'Unknown'),
+                        artist='Unknown',
+                        album='',
+                        duration=data.get('duration', 0),
+                        platform='local',
+                        url=data['url']
+                    )
+                    playlist.add_song(song)
+            
+            logger.info(f"Imported PLS playlist with {len(playlist.songs)} songs")
+            return playlist
+            
+        except Exception as e:
+            logger.error(f"Error importing PLS from content: {e}")
+            return None
+
     def _is_safe_url(self, url: str) -> bool:
         """检查URL是否安全"""
         try:

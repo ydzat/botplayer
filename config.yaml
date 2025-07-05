@@ -54,6 +54,20 @@ botplayer:
     timeout: 30
     max_songs_per_playlist: 1000
   
+  # WebDAV 用户个人配置支持
+  webdav:
+    enabled: true  # 启用 WebDAV 个人配置功能
+    user_config_path: "data/user_configs"  # 用户配置文件存储路径
+    connection_timeout: 30
+    read_timeout: 60
+    max_file_size: 10485760  # 10MB - WebDAV 下载文件大小限制
+    allowed_file_types:  # 允许的歌单文件类型
+      - ".json"
+      - ".m3u"
+      - ".m3u8"
+      - ".pls"
+    auto_sync_interval: 3600  # 自动同步间隔（秒）
+  
   # 插件执行配置
   plugin_execution:
     js_timeout: 10  # JavaScript 执行超时
