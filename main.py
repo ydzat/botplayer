@@ -382,8 +382,8 @@ class BotPlayerPlugin(BasePlugin):
             if playlists:
                 response = f"📝 **歌单列表** ({len(playlists)}):\n\n"
                 for i, playlist in enumerate(playlists, 1):
-                    response += f"**{i}.** {playlist.name}\n"
-                    response += f"　　👤 {playlist.creator} | 🎵 {len(playlist.songs)} 首歌曲\n\n"
+                    response += f"**{i}.** {playlist['name']}\n"
+                    response += f"　　👤 {playlist['creator']} | 🎵 {playlist['song_count']} 首歌曲\n\n"
                 
                 response += "使用 `!playlist play <歌单名>` 播放歌单"
                 await self.reply_message(ctx, response)
@@ -416,18 +416,18 @@ class BotPlayerPlugin(BasePlugin):
         """播放歌单"""
         try:
             playlists = await self.player_core.get_playlists()
-            playlist = next((p for p in playlists if playlist_name.lower() in p.name.lower()), None)
+            playlist = next((p for p in playlists if playlist_name.lower() in p['name'].lower()), None)
             
             if not playlist:
                 await self.reply_message(ctx, f"❌ 未找到歌单: {playlist_name}")
                 return
             
-            success = await self.player_core.load_playlist_to_queue(playlist.id)
+            success = await self.player_core.load_playlist_to_queue(playlist['id'])
             if success:
                 await self.reply_message(ctx, 
                     f"✅ 已加载歌单到队列:\n"
-                    f"**{playlist.name}**\n"
-                    f"🎵 {len(playlist.songs)} 首歌曲"
+                    f"**{playlist['name']}**\n"
+                    f"🎵 {playlist['song_count']} 首歌曲"
                 )
             else:
                 await self.reply_message(ctx, "❌ 加载歌单失败")
@@ -439,12 +439,12 @@ class BotPlayerPlugin(BasePlugin):
         """缓存管理命令"""
         if not args:
             # 显示缓存状态
-            stats = self.player_core.get_cache_status()
+            stats = self.player_core.cache_manager.get_cache_stats()
             response = f"💾 **缓存状态:**\n"
             response += f"📁 文件数量: {stats['total_files']}\n"
-            response += f"💽 使用空间: {stats['total_size_mb']} MB / {stats['max_size_mb']} MB\n"
-            response += f"📊 使用率: {stats['usage_percent']}%\n"
-            response += f"📈 平均访问次数: {stats['avg_access_count']}\n"
+            response += f"💽 使用空间: {stats.get('total_size_mb', 0):.1f} MB / {stats.get('max_size_mb', 0):.1f} MB\n"
+            response += f"📊 使用率: {stats.get('usage_percent', 0):.1f}%\n"
+            response += f"📈 平均访问次数: {stats.get('avg_access_count', 0):.1f}\n"
             
             await self.reply_message(ctx, response)
             return
@@ -560,6 +560,8 @@ class BotPlayerPlugin(BasePlugin):
                     print(f'音频播放错误: {error}')
                 else:
                     print('音频播放完成')
+                    # 播放完成后尝试播放下一首
+                    asyncio.create_task(self.handle_song_finished(ctx, adapter, guild_id))
             
             # 播放音频文件
             ffmpeg_options = {
@@ -575,6 +577,32 @@ class BotPlayerPlugin(BasePlugin):
         except Exception as e:
             print(f"Error playing audio file: {e}")
             return False
+
+    async def handle_song_finished(self, ctx: EventContext, adapter, guild_id: int):
+        """处理歌曲播放完成"""
+        try:
+            # 播放下一首歌
+            next_song = await self.player_core.play_next()
+            if next_song:
+                # 获取音频文件并播放
+                audio_file = await self.player_core.cache_manager.get_audio_file(next_song)
+                if audio_file:
+                    success = await self.play_audio_file(ctx, adapter, guild_id, audio_file)
+                    if success:
+                        await self.reply_message(ctx, 
+                            f"🎵 自动播放下一首:\n"
+                            f"**{next_song.title}**\n"
+                            f"👤 {next_song.artist}\n"
+                            f"📀 {next_song.album}\n"
+                            f"🎧 {next_song.platform}"
+                        )
+            else:
+                # 队列为空，停止播放
+                self.player_core.stop()
+                await self.reply_message(ctx, "🎵 播放队列已结束")
+                
+        except Exception as e:
+            print(f"Error handling song finished: {e}")
 
     async def reply_message(self, ctx: EventContext, text: str):
         """回复消息"""

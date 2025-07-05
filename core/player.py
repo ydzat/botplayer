@@ -4,6 +4,7 @@ BotPlayer 核心播放器
 """
 import asyncio
 import logging
+import json
 from typing import Optional, List, Dict, Any
 from .models import Song, Playlist, PlayQueue, PlayerState, PlayerStatus, PlayMode
 from .plugin_manager import PluginManager
@@ -268,8 +269,20 @@ class BotPlayerCore:
         self.player_state.queue.shuffle_all()
         logger.info("Queue shuffled")
     
-    def set_play_mode(self, mode: PlayMode):
+    def set_play_mode(self, mode):
         """设置播放模式"""
+        if isinstance(mode, str):
+            # 将字符串转换为 PlayMode 枚举
+            mode_map = {
+                'sequential': PlayMode.SEQUENTIAL,
+                'random': PlayMode.SHUFFLE,
+                'shuffle': PlayMode.SHUFFLE,
+                'loop': PlayMode.REPEAT_ALL,
+                'repeat_all': PlayMode.REPEAT_ALL,
+                'repeat_one': PlayMode.REPEAT_ONE
+            }
+            mode = mode_map.get(mode.lower(), PlayMode.SEQUENTIAL)
+        
         self.player_state.queue.play_mode = mode
         logger.info(f"Play mode set to {mode.value}")
     
@@ -283,98 +296,128 @@ class BotPlayerCore:
         }
     
     # 歌单管理方法
-    async def import_playlist_from_url(self, url: str) -> Optional[Playlist]:
-        """从URL导入歌单"""
-        try:
-            playlist = await self.playlist_importer.import_from_url(url)
-            if playlist:
-                await self._save_playlist(playlist)
-                logger.info(f"Imported playlist: {playlist.name} with {len(playlist.songs)} songs")
-            return playlist
-        except Exception as e:
-            logger.error(f"Error importing playlist from URL: {e}")
-            return None
-    
-    async def import_playlist_from_file(self, file_path: str) -> Optional[Playlist]:
-        """从文件导入歌单"""
-        try:
-            playlist = await self.playlist_importer.import_from_file(file_path)
-            if playlist:
-                await self._save_playlist(playlist)
-                logger.info(f"Imported playlist: {playlist.name} with {len(playlist.songs)} songs")
-            return playlist
-        except Exception as e:
-            logger.error(f"Error importing playlist from file: {e}")
-            return None
-    
-    async def _save_playlist(self, playlist: Playlist):
+    async def save_playlist(self, playlist: Playlist) -> Optional[str]:
         """保存歌单到数据库"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 # 保存歌单信息
-                now = datetime.now().isoformat()
                 conn.execute('''
                     INSERT OR REPLACE INTO playlists 
                     (id, name, description, creator, cover, tags, created_at, updated_at, extra)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    playlist.id, playlist.name, playlist.description, playlist.creator,
-                    playlist.cover, ','.join(playlist.tags), 
-                    playlist.created_at or now, now, str(playlist.extra)
+                    playlist.id,
+                    playlist.name,
+                    playlist.description,
+                    playlist.creator,
+                    playlist.cover,
+                    ','.join(playlist.tags) if playlist.tags else '',
+                    playlist.created_at.isoformat() if playlist.created_at else datetime.now().isoformat(),
+                    datetime.now().isoformat(),
+                    json.dumps(playlist.extra) if playlist.extra else '{}'
                 ))
                 
-                # 保存歌曲
-                for song in playlist.songs:
-                    await self._save_song(song)
-                
-                # 保存歌单歌曲关系
+                # 删除旧的歌曲关系
                 conn.execute('DELETE FROM playlist_songs WHERE playlist_id = ?', (playlist.id,))
-                for i, song in enumerate(playlist.songs):
+                
+                # 保存歌曲和关系
+                for position, song in enumerate(playlist.songs):
+                    # 保存歌曲信息
+                    conn.execute('''
+                        INSERT OR REPLACE INTO songs 
+                        (id, title, artist, album, duration, platform, artwork, url, tags, date, extra)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        song.id,
+                        song.title,
+                        song.artist,
+                        song.album,
+                        song.duration,
+                        song.platform,
+                        song.artwork,
+                        song.url,
+                        ','.join(song.tags) if song.tags else '',
+                        song.date,
+                        json.dumps(song.extra) if song.extra else '{}'
+                    ))
+                    
+                    # 保存歌单-歌曲关系
                     conn.execute('''
                         INSERT INTO playlist_songs (playlist_id, song_id, position)
                         VALUES (?, ?, ?)
-                    ''', (playlist.id, song.id, i))
+                    ''', (playlist.id, song.id, position))
                 
                 conn.commit()
+                logger.info(f"Saved playlist {playlist.name} with {len(playlist.songs)} songs")
+                return playlist.id
+                
         except Exception as e:
-            logger.error(f"Error saving playlist {playlist.id}: {e}")
+            logger.error(f"Error saving playlist: {e}")
+            return None
     
-    async def get_playlists(self) -> List[Playlist]:
+    async def get_playlists(self) -> List[Dict[str, Any]]:
         """获取所有歌单"""
         try:
-            playlists = []
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute('''
-                    SELECT id, name, description, creator, cover, tags, created_at, updated_at, extra
-                    FROM playlists
+                    SELECT p.id, p.name, p.description, p.creator, p.cover, p.tags, 
+                           p.created_at, p.updated_at, COUNT(ps.song_id) as song_count
+                    FROM playlists p
+                    LEFT JOIN playlist_songs ps ON p.id = ps.playlist_id
+                    GROUP BY p.id
+                    ORDER BY p.updated_at DESC
                 ''')
                 
-                for row in cursor:
-                    playlist = Playlist(
-                        id=row[0],
-                        name=row[1],
-                        description=row[2] or '',
-                        creator=row[3] or '',
-                        cover=row[4] or '',
-                        tags=row[5].split(',') if row[5] else [],
-                        created_at=row[6] or '',
-                        updated_at=row[7] or '',
-                        extra=eval(row[8]) if row[8] else {}
-                    )
-                    
-                    # 加载歌曲
-                    await self._load_playlist_songs(playlist)
-                    playlists.append(playlist)
-            
-            return playlists
+                playlists = []
+                for row in cursor.fetchall():
+                    playlists.append({
+                        'id': row[0],
+                        'name': row[1],
+                        'description': row[2],
+                        'creator': row[3],
+                        'cover': row[4],
+                        'tags': row[5].split(',') if row[5] else [],
+                        'created_at': row[6],
+                        'updated_at': row[7],
+                        'song_count': row[8]
+                    })
+                
+                return playlists
+                
         except Exception as e:
             logger.error(f"Error getting playlists: {e}")
             return []
     
-    async def _load_playlist_songs(self, playlist: Playlist):
-        """加载歌单的歌曲"""
+    async def get_playlist_by_id(self, playlist_id: str) -> Optional[Playlist]:
+        """根据ID获取歌单"""
         try:
             with sqlite3.connect(self.db_path) as conn:
+                # 获取歌单信息
+                cursor = conn.execute('''
+                    SELECT id, name, description, creator, cover, tags, created_at, updated_at, extra
+                    FROM playlists WHERE id = ?
+                ''', (playlist_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                
+                # 创建歌单对象
+                from datetime import datetime
+                import json
+                
+                playlist = Playlist(
+                    id=row[0],
+                    name=row[1],
+                    description=row[2],
+                    creator=row[3],
+                    cover=row[4],
+                    tags=row[5].split(',') if row[5] else [],
+                    created_at=datetime.fromisoformat(row[6]) if row[6] else None,
+                    extra=json.loads(row[8]) if row[8] else {}
+                )
+                
+                # 获取歌曲列表
                 cursor = conn.execute('''
                     SELECT s.id, s.title, s.artist, s.album, s.duration, s.platform, 
                            s.artwork, s.url, s.tags, s.date, s.extra
@@ -382,34 +425,58 @@ class BotPlayerCore:
                     JOIN playlist_songs ps ON s.id = ps.song_id
                     WHERE ps.playlist_id = ?
                     ORDER BY ps.position
-                ''', (playlist.id,))
+                ''', (playlist_id,))
                 
-                for row in cursor:
+                for song_row in cursor.fetchall():
                     song = Song(
-                        id=row[0],
-                        title=row[1],
-                        artist=row[2] or '',
-                        album=row[3] or '',
-                        duration=row[4] or 0,
-                        platform=row[5] or '',
-                        artwork=row[6] or '',
-                        url=row[7] or '',
-                        tags=row[8].split(',') if row[8] else [],
-                        date=row[9] or '',
-                        extra=eval(row[10]) if row[10] else {}
+                        id=song_row[0],
+                        title=song_row[1],
+                        artist=song_row[2],
+                        album=song_row[3],
+                        duration=song_row[4],
+                        platform=song_row[5],
+                        artwork=song_row[6],
+                        url=song_row[7],
+                        tags=song_row[8].split(',') if song_row[8] else [],
+                        date=song_row[9],
+                        extra=json.loads(song_row[10]) if song_row[10] else {}
                     )
-                    playlist.songs.append(song)
+                    playlist.add_song(song)
+                
+                return playlist
+                
         except Exception as e:
-            logger.error(f"Error loading songs for playlist {playlist.id}: {e}")
+            logger.error(f"Error getting playlist {playlist_id}: {e}")
+            return None
+    
+    async def delete_playlist(self, playlist_id: str) -> bool:
+        """删除歌单"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # 删除歌单-歌曲关系
+                conn.execute('DELETE FROM playlist_songs WHERE playlist_id = ?', (playlist_id,))
+                
+                # 删除歌单
+                cursor = conn.execute('DELETE FROM playlists WHERE id = ?', (playlist_id,))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    logger.info(f"Deleted playlist {playlist_id}")
+                    return True
+                else:
+                    logger.warning(f"Playlist {playlist_id} not found")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error deleting playlist {playlist_id}: {e}")
+            return False
     
     async def load_playlist_to_queue(self, playlist_id: str, clear_queue: bool = True) -> bool:
-        """加载歌单到播放队列"""
+        """将歌单加载到播放队列"""
         try:
-            playlists = await self.get_playlists()
-            playlist = next((p for p in playlists if p.id == playlist_id), None)
-            
+            playlist = await self.get_playlist_by_id(playlist_id)
             if not playlist:
-                logger.error(f"Playlist not found: {playlist_id}")
+                logger.error(f"Playlist {playlist_id} not found")
                 return False
             
             if clear_queue:
@@ -418,7 +485,7 @@ class BotPlayerCore:
             for song in playlist.songs:
                 self.add_to_queue(song)
             
-            logger.info(f"Loaded playlist '{playlist.name}' to queue ({len(playlist.songs)} songs)")
+            logger.info(f"Loaded playlist {playlist.name} with {len(playlist.songs)} songs to queue")
             return True
             
         except Exception as e:
@@ -653,3 +720,47 @@ class BotPlayerCore:
                 'plugins': [],
                 'error': str(e)
             }
+    
+    async def import_playlist_from_url(self, url: str) -> Optional[Playlist]:
+        """从URL导入歌单并保存"""
+        try:
+            # 使用歌单导入器导入
+            playlist = await self.playlist_importer.import_from_url(url)
+            if not playlist:
+                logger.error(f"Failed to import playlist from URL: {url}")
+                return None
+            
+            # 保存到数据库
+            saved_id = await self.save_playlist(playlist)
+            if saved_id:
+                logger.info(f"Successfully imported and saved playlist: {playlist.name}")
+                return playlist
+            else:
+                logger.error(f"Failed to save imported playlist: {playlist.name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error importing playlist from URL {url}: {e}")
+            return None
+    
+    async def import_playlist_from_file(self, file_path: str) -> Optional[Playlist]:
+        """从文件导入歌单并保存"""
+        try:
+            # 使用歌单导入器导入
+            playlist = await self.playlist_importer.import_from_file(file_path)
+            if not playlist:
+                logger.error(f"Failed to import playlist from file: {file_path}")
+                return None
+            
+            # 保存到数据库
+            saved_id = await self.save_playlist(playlist)
+            if saved_id:
+                logger.info(f"Successfully imported and saved playlist: {playlist.name}")
+                return playlist
+            else:
+                logger.error(f"Failed to save imported playlist: {playlist.name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error importing playlist from file {file_path}: {e}")
+            return None
