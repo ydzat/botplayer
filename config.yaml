@@ -1,0 +1,91 @@
+# BotPlayer 插件配置文件
+
+botplayer:
+  # 音源插件配置
+  plugins:
+    enabled:
+      - bilibili
+      - netease
+      - local
+    plugin_dir: "./data/plugins"
+    update_interval: 86400  # 24小时检查一次更新
+  
+  # 缓存配置
+  cache:
+    max_size: 10737418240  # 10GB
+    cache_dir: "./data/audio_cache"
+    cleanup_threshold: 0.9  # 90%时触发清理
+    min_access_interval: 3600  # 1小时内访问的不清理
+    max_concurrent_downloads: 3
+    download_timeout: 300  # 5分钟超时
+  
+  # 播放配置
+  playback:
+    default_volume: 0.5
+    auto_play: true
+    timeout: 30
+    buffer_size: 1024
+    audio_format: "opus"
+    audio_bitrate: "128k"
+  
+  # Discord配置
+  discord:
+    max_queue_size: 100
+    idle_timeout: 300  # 5分钟无活动后断开
+    reconnect_attempts: 3
+    command_prefix: "!"
+  
+  # 数据存储配置
+  storage:
+    database_path: "data/botplayer.db"
+    audio_cache_path: "data/audio_cache"
+    plugins_path: "data/plugins"
+    playlists_path: "data/playlists"
+  
+  # 歌单导入安全设置
+  playlist_import:
+    allowed_domains:
+      - "github.com"
+      - "gist.githubusercontent.com"
+      - "gitee.com"
+      - "music.163.com"
+      - "y.qq.com"
+    max_file_size: 5242880  # 5MB
+    timeout: 30
+    max_songs_per_playlist: 1000
+  
+  # 插件执行配置
+  plugin_execution:
+    js_timeout: 10  # JavaScript 执行超时
+    max_retries: 3
+    node_path: "node"  # Node.js 可执行文件路径
+  
+  # FFmpeg 配置
+  ffmpeg:
+    path: "ffmpeg"  # FFmpeg 可执行文件路径
+    audio_codec: "libopus"
+    video_codec: "none"
+    extra_args:
+      - "-loglevel"
+      - "error"
+  
+  # 日志配置
+  logging:
+    level: "INFO"
+    file: "data/botplayer.log"
+    max_size: 10485760  # 10MB
+    backup_count: 5
+  
+  # 搜索配置
+  search:
+    max_results: 20
+    timeout: 10
+    result_ranking:
+      title_exact_match: 100
+      title_contains: 50
+      artist_match: 30
+      platform_priority:
+        bilibili: 20
+        netease: 15
+        local: 10
+        default: 5

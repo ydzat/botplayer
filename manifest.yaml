@@ -5,25 +5,45 @@ metadata:
   author: ydzat  # 插件作者，修改为你的名称
   name: botplayer  # 插件名称，修改为你的插件名称
   repository: 'https://github.com/ydzat/botplayer'  # 插件仓库地址，修改为你的插件 GitHub 仓库地址
-  version: 0.1.0  # 插件版本，修改为你的插件版本
+  version: 1.0.0  # 插件版本，修改为你的插件版本
   description:  # 插件简介，修改为你的插件简介，支持多语言
-    en_US: Play your own Music List (WebDAV) with discord robot
-    zh_CN: 使用 Discord 机器人播放自己的音乐列表（WebDAV）
+    en_US: Discord music bot with multi-source support and playlist management
+    zh_CN: 支持多音源和歌单管理的 Discord 音乐机器人
   label:  # 插件显示名称，支持多语言。在 WebUI 上会显示对应语言的 label
     en_US: BotPlayer
     zh_CN: BotPlayer
 spec:
   # 插件配置（可选），可配置多项
   config:
-    - name: github_token  # 配置项名称
+    - name: cache_max_size  # 配置项名称
       label:  # 配置项显示名称，支持多语言
-        en_US: Github Token
-        zh_CN: Github Token
+        en_US: Cache Max Size (GB)
+        zh_CN: 缓存最大容量 (GB)
       description:  # 配置项描述，支持多语言
-        en_US: Image downloading requires a Github token
-        zh_CN: 如果不填的话，图片可能会下载失败
-      type: string  # 配置项类型，支持 string, integer, float, boolean 等
-      default: ''  # 配置项默认值
+        en_US: Maximum cache size in GB, default 10GB
+        zh_CN: 音频缓存最大容量，默认 10GB
+      type: integer  # 配置项类型，支持 string, integer, float, boolean 等
+      default: 10  # 配置项默认值
+      required: false  # 配置项是否必填
+    - name: concurrent_downloads  # 配置项名称
+      label:  # 配置项显示名称，支持多语言
+        en_US: Concurrent Downloads
+        zh_CN: 并发下载数
+      description:  # 配置项描述，支持多语言
+        en_US: Maximum concurrent downloads, default 3
+        zh_CN: 最大并发下载数，默认 3
+      type: integer  # 配置项类型
+      default: 3  # 配置项默认值
+      required: false  # 配置项是否必填
+    - name: download_timeout  # 配置项名称
+      label:  # 配置项显示名称，支持多语言
+        en_US: Download Timeout (seconds)
+        zh_CN: 下载超时时间 (秒)
+      description:  # 配置项描述，支持多语言
+        en_US: Download timeout in seconds, default 300
+        zh_CN: 下载超时时间，默认 300 秒
+      type: integer  # 配置项类型
+      default: 300  # 配置项默认值
       required: false  # 配置项是否必填
 execution:
   python:

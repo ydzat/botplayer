@@ -1,32 +1,14 @@
-# HelloPlugin
+# BotPlayer
 
-<!--
-## 插件开发者详阅
+简单的 Discord 音乐播放器插件，支持多音源搜索和播放。
 
-### 开始
+## 功能特性
 
-此仓库是 LangBot 插件模板，您可以直接在 GitHub 仓库中点击右上角的 "Use this template" 以创建你的插件。  
-接下来按照以下步骤修改模板代码：
-
-#### 修改模板代码
-
-- 修改此文档顶部插件名称信息
-- 将此文档下方的`<插件发布仓库地址>`改为你的插件在 GitHub 上的地址
-- 补充下方的`使用`章节内
-- 修改`main.py`中的`MyPlugin`类名为你的插件类名
-- 修改`manifest.yaml`中的信息
-- 将插件所需依赖库写到`requirements.txt`中
-- 根据[插件开发教程](https://docs.langbot.app/zh/plugin/dev/tutor.html)编写插件代码
-- 删除 README.md 中的注释内容
-
-
-#### 发布插件
-
-推荐将插件上传到 GitHub 代码仓库，以便用户通过下方方式安装。   
-欢迎[提issue](https://github.com/RockChinQ/LangBot/issues/new?assignees=&labels=%E7%8B%AC%E7%AB%8B%E6%8F%92%E4%BB%B6&projects=&template=submit-plugin.yml&title=%5BPlugin%5D%3A+%E8%AF%B7%E6%B1%82%E7%99%BB%E8%AE%B0%E6%96%B0%E6%8F%92%E4%BB%B6)，将您的插件提交到[插件列表](https://github.com/stars/RockChinQ/lists/qchatgpt-%E6%8F%92%E4%BB%B6)
-
-下方是给用户看的内容，按需修改
--->
+- 🎵 多音源支持（Bilibili、网易云音乐、本地文件）
+- 🎧 Discord 语音频道播放
+- 📋 播放队列管理
+- 💾 智能音频缓存
+- 🎶 歌单导入和管理
 
 ## 安装
 
@@ -35,4 +17,26 @@
 
 ## 使用
 
-<!-- 插件开发者自行填写插件使用说明 -->
+### 基本播放
+- `!play <歌曲名>` - 播放歌曲
+- `!pause` - 暂停播放
+- `!resume` - 恢复播放
+- `!stop` - 停止播放
+- `!skip` - 跳过当前歌曲
+
+### 队列管理
+- `!queue` - 查看播放队列
+- `!shuffle` - 随机播放
+- `!repeat <模式>` - 循环模式 (off/all/one)
+
+### 其他功能
+- `!search <关键词>` - 搜索歌曲
+- `!playlist list` - 查看歌单
+- `!cache` - 查看缓存状态
+- `!help` - 显示帮助信息
+
+## 注意事项
+
+- 仅支持 Discord 平台使用
+- 需要机器人有语音频道权限
+- 首次使用时会自动下载音频文件
