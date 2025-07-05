@@ -1,3 +1,22 @@
+# BotPlayer specific ignores
+# Data directory - contains runtime files, caches, and databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio files
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.ogg
+*.opus
+
+# Configuration files with potential sensitive data
+config.yaml
+*.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
